@@ -55,7 +55,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useCallback } = React;
+        const { useState, useEffect, useRef, useCallback, useLayoutEffect } = React;
 
         // --- [핵심 수학 알고리즘] ---
         function solveGaussian(A, b) {
@@ -225,6 +225,9 @@
             const [zoomLevel, setZoomLevel] = useState(1);
             
             const imageContainerRef = useRef(null);
+            // 실제 이미지 태그를 참조하기 위한 ref 추가
+            const imageRef = useRef(null);
+
             const previewCanvasRef = useRef(null);
             const previewWarperRef = useRef(null);
             const [isExporting, setIsExporting] = useState(false);
@@ -232,6 +235,9 @@
             // 격자 관련 상태
             const [showGrid, setShowGrid] = useState(true);
             const [gridSize, setGridSize] = useState(0.1); 
+
+            // 컨테이너와 실제 이미지의 좌표 정보 상태
+            const [layoutRects, setLayoutRects] = useState({ container: null, image: null });
 
             const activeImage = images[activeIndex];
 
@@ -258,6 +264,16 @@
             const onDrop = (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); };
             const onDragOver = (e) => e.preventDefault();
 
+            // 이미지나 줌 레벨이 변경될 때 레이아웃 정보 업데이트
+            useLayoutEffect(() => {
+                if (imageContainerRef.current && imageRef.current) {
+                    setLayoutRects({
+                        container: imageContainerRef.current.getBoundingClientRect(),
+                        image: imageRef.current.getBoundingClientRect()
+                    });
+                }
+            }, [activeImage, zoomLevel]);
+
             // 점 드래그 핸들러
             const handlePointerDown = (e, idx) => {
                 e.target.setPointerCapture(e.pointerId);
@@ -266,11 +282,12 @@
             };
 
             const handlePointerMove = (e) => {
-                if (draggingPoint === null || !imageContainerRef.current) return;
+                // imageRef.current가 없으면 중단
+                if (draggingPoint === null || !imageRef.current) return;
                 setMousePos({ x: e.clientX, y: e.clientY });
                 
-                const rect = imageContainerRef.current.getBoundingClientRect();
-                // 줌 레벨 스케일은 getBoundingClientRect에 이미 반영됨
+                // 실제 이미지가 렌더링된 영역의 rect를 기준으로 좌표 계산
+                const rect = imageRef.current.getBoundingClientRect();
                 const nx = (e.clientX - rect.left) / rect.width;
                 const ny = (e.clientY - rect.top) / rect.height;
 
@@ -392,9 +409,29 @@
                 if (activeIndex >= index && activeIndex > 0) setActiveIndex(activeIndex - 1);
             };
 
+            // 컨테이너 내에서 이미지의 실제 위치와 크기를 기준으로 좌표를 변환하는 헬퍼 함수
+            const getTransformedPoint = (p) => {
+                const { container, image } = layoutRects;
+                if (!container || !image || !activeImage) return { x: p.x * 100, y: p.y * 100 };
+
+                const offsetLeft = (image.left - container.left) / container.width;
+                const offsetTop = (image.top - container.top) / container.height;
+                const scaleX = image.width / container.width;
+                const scaleY = image.height / container.height;
+
+                return {
+                    x: (offsetLeft + p.x * scaleX) * 100,
+                    y: (offsetTop + p.y * scaleY) * 100
+                };
+            };
+
+            // SVG Polygon 라인 그리기 (변환된 좌표 사용)
             const getSvgPolygonPoints = () => {
-                if (!activeImage) return "";
-                return activeImage.points.map(p => `${p.x * 100},${p.y * 100}`).join(' ');
+                if (!activeImage || !layoutRects.image) return "";
+                return activeImage.points.map(p => {
+                    const tp = getTransformedPoint(p);
+                    return `${tp.x},${tp.y}`;
+                }).join(' ');
             };
 
             return (
@@ -470,23 +507,29 @@
                                 {/* 이미지와 보정 레이어를 감싸는 컨테이너 */}
                                 <div ref={imageContainerRef} className="relative shadow-2xl select-none w-full h-full max-w-full max-h-full flex items-center justify-center transition-transform origin-center" 
                                      style={{ touchAction: 'none', transform: `scale(${zoomLevel})` }}>
-                                    <img src={activeImage.url} alt="Workspace" className="max-w-full max-h-full object-contain pointer-events-none rounded block" />
+                                    {/* 실제 이미지 태그에 ref 추가 */}
+                                    <img ref={imageRef} src={activeImage.url} alt="Workspace" className="max-w-full max-h-full object-contain pointer-events-none rounded block" />
                                     
                                     <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
+                                        {/* 변환된 좌표를 사용하여 폴리곤 그리기 */}
                                         <polygon points={getSvgPolygonPoints()} className="fill-blue-500/10 stroke-blue-500 stroke-[0.3]" />
                                     </svg>
                                     
-                                    {activeImage.points.map((p, i) => (
-                                        <div key={i}
-                                             className={`absolute w-10 h-10 -ml-5 -mt-5 md:w-8 md:h-8 md:-ml-4 md:-mt-4 bg-white/90 backdrop-blur border-[3px] border-blue-500 rounded-full cursor-grab active:cursor-grabbing shadow-xl z-20 flex items-center justify-center hover:scale-110 transition-transform ${draggingPoint === i ? 'scale-125 bg-blue-100' : ''}`}
-                                             style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
-                                             onPointerDown={(e) => handlePointerDown(e, i)}
-                                             onPointerMove={handlePointerMove}
-                                             onPointerUp={handlePointerUp}
-                                             onPointerCancel={handlePointerUp}>
-                                             <div className="w-1.5 h-1.5 bg-blue-500 rounded-full pointer-events-none"></div>
-                                        </div>
-                                    ))}
+                                    {activeImage.points.map((p, i) => {
+                                        // 변환된 좌표를 사용하여 포인터 위치 계산
+                                        const tp = getTransformedPoint(p);
+                                        return (
+                                            <div key={i}
+                                                 className={`absolute w-10 h-10 -ml-5 -mt-5 md:w-8 md:h-8 md:-ml-4 md:-mt-4 bg-white/90 backdrop-blur border-[3px] border-blue-500 rounded-full cursor-grab active:cursor-grabbing shadow-xl z-20 flex items-center justify-center hover:scale-110 transition-transform ${draggingPoint === i ? 'scale-125 bg-blue-100' : ''}`}
+                                                 style={{ left: `${tp.x}%`, top: `${tp.y}%` }} // 변환된 좌표 적용
+                                                 onPointerDown={(e) => handlePointerDown(e, i)}
+                                                 onPointerMove={handlePointerMove}
+                                                 onPointerUp={handlePointerUp}
+                                                 onPointerCancel={handlePointerUp}>
+                                                 <div className="w-1.5 h-1.5 bg-blue-500 rounded-full pointer-events-none"></div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
 
                                 {/* 실시간 돋보기(Loupe) - 오작동 버그 수정 (zoomLevel 배제) */}
