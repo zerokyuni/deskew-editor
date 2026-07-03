@@ -696,17 +696,32 @@
                                     )}
                                 </div>
                                 
-                                {/* 저장 버튼 */}
-                                <div className="flex gap-1.5">
-                                    <button onClick={downloadSingle} disabled={!activeImage || isExporting} 
-                                            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium transition-colors text-xs md:text-sm">
-                                        <IconDownload /> <span className="hidden sm:inline">단일저장</span>
-                                    </button>
-                                    <button onClick={downloadZip} disabled={images.length === 0 || isExporting}
-                                            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium shadow-lg shadow-blue-900/50 transition-all active:scale-[0.98] text-xs md:text-sm">
-                                        <IconArchive /> <span>전체저장</span>
-                                    </button>
-                                </div>
+                               {/* 저장 버튼 */}
+<div className="flex gap-1.5">
+  <button 
+    onClick={downloadSingle} 
+    disabled={!activeImage || isExporting} 
+    className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium transition-colors text-xs md:text-sm"
+  >
+    <IconDownload /> 
+    <span className="hidden sm:flex flex-col items-center leading-none">
+      <span>단일</span>
+      <span>저장</span>
+    </span>
+  </button>
+
+  <button 
+    onClick={downloadZip} 
+    disabled={images.length === 0 || isExporting}
+    className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium shadow-lg shadow-blue-900/50 transition-all active:scale-[0.98] text-xs md:text-sm"
+  >
+    <IconArchive /> 
+    <span className="flex flex-col items-center leading-none">
+      <span>전체</span>
+      <span>저장</span>
+    </span>
+  </button>
+</div>
                             </div>
                         </div>
                         
