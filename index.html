@@ -38,6 +38,7 @@
             background: #334155;
             border-radius: 3px;
             outline: none;
+            width: 100%;
         }
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
@@ -127,6 +128,24 @@
                     uniform bool u_showGrid;
                     uniform float u_gridSize;
 
+                    // 색상 보정 유니폼
+                    uniform float u_brightness;
+                    uniform float u_contrast;
+                    uniform float u_saturation;
+
+                    vec3 adjustColor(vec3 color) {
+                        // 1. 밝기 (Brightness)
+                        color += u_brightness;
+                        // 2. 대비 (Contrast)
+                        color = (color - 0.5) * u_contrast + 0.5;
+                        // 3. 채도 (Saturation)
+                        float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+                        color = mix(vec3(luminance), color, u_saturation);
+                        
+                        // 범위 클램핑
+                        return clamp(color, 0.0, 1.0);
+                    }
+
                     void main() {
                         vec3 srcP = u_H * vec3(v_dstUV, 1.0);
                         vec2 srcUV = srcP.xy / srcP.z;
@@ -135,7 +154,10 @@
                         if (srcUV.x < 0.0 || srcUV.x > 1.0 || srcUV.y < 0.0 || srcUV.y > 1.0) {
                             color = vec4(0.0, 0.0, 0.0, 0.0);
                         } else {
-                            color = texture2D(u_image, srcUV);
+                            vec4 texColor = texture2D(u_image, srcUV);
+                            // 색상 보정 적용
+                            texColor.rgb = adjustColor(texColor.rgb);
+                            color = vec4(texColor.rgb, texColor.a);
                         }
 
                         if (u_showGrid) {
@@ -173,6 +195,11 @@
                 this.uMatrixLocation = gl.getUniformLocation(program, 'u_H');
                 this.uShowGridLocation = gl.getUniformLocation(program, 'u_showGrid');
                 this.uGridSizeLocation = gl.getUniformLocation(program, 'u_gridSize');
+                
+                // 컬러 유니폼 위치 초기화
+                this.uBrightnessLocation = gl.getUniformLocation(program, 'u_brightness');
+                this.uContrastLocation = gl.getUniformLocation(program, 'u_contrast');
+                this.uSaturationLocation = gl.getUniformLocation(program, 'u_saturation');
             }
 
             setTexture(imageObj) {
@@ -189,6 +216,13 @@
                 const gl = this.gl;
                 gl.uniform1i(this.uShowGridLocation, showGrid ? 1 : 0);
                 gl.uniform1f(this.uGridSizeLocation, gridSize);
+            }
+
+            setColor(brightness, contrast, saturation) {
+                const gl = this.gl;
+                gl.uniform1f(this.uBrightnessLocation, brightness);
+                gl.uniform1f(this.uContrastLocation, contrast);
+                gl.uniform1f(this.uSaturationLocation, saturation);
             }
 
             draw(points) {
@@ -210,6 +244,8 @@
         const IconArchive = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" x2="14" y1="12" y2="12"/></svg>;
         const IconTrash = () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>;
         const IconGrid = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>;
+        const IconSliders = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>;
+        const IconZoomIn = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>;
 
         // --- [React 메인 어플리케이션] ---
         const App = () => {
@@ -218,21 +254,23 @@
             
             // 모바일 탭 상태 ('edit' or 'preview')
             const [mobileTab, setMobileTab] = useState('edit');
+            // 모바일 전용 색상 툴바 시트 가시성
+            const [showMobileColorPanel, setShowMobileColorPanel] = useState(false);
 
             // 드래그 조작 관련 State
             const [draggingPoint, setDraggingPoint] = useState(null);
             const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+            
+            // 편집영역 & 미리보기영역 줌
             const [zoomLevel, setZoomLevel] = useState(1);
+            const [previewZoomLevel, setPreviewZoomLevel] = useState(1);
             
             const imageContainerRef = useRef(null);
-            // 실제 이미지 태그를 참조하기 위한 ref 추가
             const imageRef = useRef(null);
-
             const previewCanvasRef = useRef(null);
             const previewWarperRef = useRef(null);
+            
             const [isExporting, setIsExporting] = useState(false);
-
-            // 격자 관련 상태
             const [showGrid, setShowGrid] = useState(true);
             const [gridSize, setGridSize] = useState(0.1); 
 
@@ -254,7 +292,9 @@
                             points: [
                                 {x: 0.1, y: 0.1}, {x: 0.9, y: 0.1}, 
                                 {x: 0.9, y: 0.9}, {x: 0.1, y: 0.9}
-                            ]
+                            ],
+                            // 초기 색상 보정 상태 추가
+                            color: { brightness: 0, contrast: 1, saturation: 1 }
                         }]);
                     };
                     img.src = url;
@@ -263,6 +303,18 @@
 
             const onDrop = (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); };
             const onDragOver = (e) => e.preventDefault();
+
+            // 색상 보정 핸들러
+            const handleColorChange = (type, value) => {
+                setImages(prev => {
+                    const newImages = [...prev];
+                    newImages[activeIndex] = {
+                        ...newImages[activeIndex],
+                        color: { ...newImages[activeIndex].color, [type]: parseFloat(value) }
+                    };
+                    return newImages;
+                });
+            };
 
             // 이미지나 줌 레벨이 변경될 때 레이아웃 정보 업데이트
             useLayoutEffect(() => {
@@ -282,11 +334,9 @@
             };
 
             const handlePointerMove = (e) => {
-                // imageRef.current가 없으면 중단
                 if (draggingPoint === null || !imageRef.current) return;
                 setMousePos({ x: e.clientX, y: e.clientY });
                 
-                // 실제 이미지가 렌더링된 영역의 rect를 기준으로 좌표 계산
                 const rect = imageRef.current.getBoundingClientRect();
                 const nx = (e.clientX - rect.left) / rect.width;
                 const ny = (e.clientY - rect.top) / rect.height;
@@ -311,14 +361,19 @@
 
             // 실시간 미리보기 WebGL 업데이트
             useEffect(() => {
-                // 모바일에서 프리뷰 탭이 아니면 렌더링 스킵하여 성능 최적화
                 if (!previewCanvasRef.current || !activeImage) return;
                 if (!previewWarperRef.current) {
                     previewWarperRef.current = new WebGLWarper(previewCanvasRef.current);
                 }
                 const warper = previewWarperRef.current;
+                
+                // 텍스처 및 격자 적용
                 warper.setTexture(activeImage.imageObj);
                 warper.setGrid(showGrid, gridSize);
+                
+                // 색상 보정 적용
+                const c = activeImage.color || { brightness: 0, contrast: 1, saturation: 1 };
+                warper.setColor(c.brightness, c.contrast, c.saturation);
 
                 const pts = activeImage.points;
                 const w1 = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
@@ -329,7 +384,7 @@
                 const outW = Math.max(w1, w2) * activeImage.imageObj.width;
                 const outH = Math.max(h1, h2) * activeImage.imageObj.height;
                 
-                const maxDim = 600;
+                const maxDim = 800; // 해상도 살짝 상향
                 let cw = outW, ch = outH;
                 if (Math.max(cw, ch) > maxDim) {
                     const scale = maxDim / Math.max(cw, ch);
@@ -339,15 +394,20 @@
                 previewCanvasRef.current.width = cw;
                 previewCanvasRef.current.height = ch;
                 warper.draw(activeImage.points);
-            }, [activeImage, activeImage?.points, showGrid, gridSize, mobileTab]);
+            }, [activeImage, activeImage?.points, activeImage?.color, showGrid, gridSize, mobileTab]);
 
             // 고해상도 이미지 처리 유틸 (다운로드용)
             const processHighResImage = (imgData) => {
                 return new Promise((resolve) => {
                     const canvas = document.createElement('canvas');
                     const warper = new WebGLWarper(canvas);
+                    
                     warper.setTexture(imgData.imageObj);
-                    warper.setGrid(false, gridSize); // 저장 시에는 격자 제거
+                    warper.setGrid(false, gridSize); 
+                    
+                    // 다운로드 시에도 색상 보정 적용
+                    const c = imgData.color || { brightness: 0, contrast: 1, saturation: 1 };
+                    warper.setColor(c.brightness, c.contrast, c.saturation);
 
                     const pts = imgData.points;
                     const w1 = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
@@ -409,7 +469,6 @@
                 if (activeIndex >= index && activeIndex > 0) setActiveIndex(activeIndex - 1);
             };
 
-            // 컨테이너 내에서 이미지의 실제 위치와 크기를 기준으로 좌표를 변환하는 헬퍼 함수
             const getTransformedPoint = (p) => {
                 const { container, image } = layoutRects;
                 if (!container || !image || !activeImage) return { x: p.x * 100, y: p.y * 100 };
@@ -425,13 +484,47 @@
                 };
             };
 
-            // SVG Polygon 라인 그리기 (변환된 좌표 사용)
             const getSvgPolygonPoints = () => {
                 if (!activeImage || !layoutRects.image) return "";
                 return activeImage.points.map(p => {
                     const tp = getTransformedPoint(p);
                     return `${tp.x},${tp.y}`;
                 }).join(' ');
+            };
+
+            // 재사용 가능한 색상 조절 패널 컴포넌트
+            const ColorAdjustmentPanel = () => {
+                if (!activeImage) return <div className="text-xs text-slate-500 text-center py-4">이미지를 선택하세요.</div>;
+                return (
+                    <div className="flex flex-col gap-5">
+                        <div className="flex flex-col gap-1.5">
+                            <div className="flex justify-between text-xs text-slate-400">
+                                <span>밝기 (Brightness)</span>
+                                <span className="w-8 text-right font-mono">{Math.round(activeImage.color.brightness * 100)}</span>
+                            </div>
+                            <input type="range" min="-1" max="1" step="0.05" value={activeImage.color.brightness} onChange={(e) => handleColorChange('brightness', e.target.value)} />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <div className="flex justify-between text-xs text-slate-400">
+                                <span>대비 (Contrast)</span>
+                                <span className="w-8 text-right font-mono">{Math.round(activeImage.color.contrast * 100)}</span>
+                            </div>
+                            <input type="range" min="0" max="2" step="0.05" value={activeImage.color.contrast} onChange={(e) => handleColorChange('contrast', e.target.value)} />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <div className="flex justify-between text-xs text-slate-400">
+                                <span>채도 (Saturation)</span>
+                                <span className="w-8 text-right font-mono">{Math.round(activeImage.color.saturation * 100)}</span>
+                            </div>
+                            <input type="range" min="0" max="2" step="0.05" value={activeImage.color.saturation} onChange={(e) => handleColorChange('saturation', e.target.value)} />
+                        </div>
+                        <button onClick={() => {
+                            handleColorChange('brightness', 0);
+                            handleColorChange('contrast', 1);
+                            handleColorChange('saturation', 1);
+                        }} className="mt-1 w-full py-2 text-xs bg-slate-800 hover:bg-slate-700 text-white rounded transition-colors font-medium">값 초기화</button>
+                    </div>
+                );
             };
 
             return (
@@ -444,39 +537,52 @@
                         </div>
                         <div className="flex bg-slate-950 rounded-lg p-1 border border-slate-800">
                             <button onClick={() => setMobileTab('edit')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mobileTab === 'edit' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>
-                                편집 영역
+                                편집
                             </button>
                             <button onClick={() => setMobileTab('preview')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mobileTab === 'preview' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>
-                                실시간 확인
+                                미리보기
                             </button>
                         </div>
                     </div>
 
-                    {/* 파일 목록 썸네일 바: 데스크탑은 좌측(세로), 모바일은 하단(가로) */}
+                    {/* 왼쪽 작업창: 파일 목록 & 색상 보정 툴바 */}
                     <div className="
-                        md:w-24 md:h-full md:flex-col md:py-4 md:border-r md:border-t-0 md:order-1
-                        w-full h-24 flex-row py-2 px-3 border-t border-slate-800 order-3
-                        bg-slate-900 z-20 shadow-xl flex items-center gap-3 shrink-0
+                        md:w-64 md:h-full md:flex-col md:border-r md:border-t-0 md:order-1
+                        w-full h-auto flex-row py-2 px-3 border-t border-slate-800 order-3
+                        bg-slate-900 z-20 shadow-xl flex gap-3 shrink-0
                     ">
-                        <div className="hidden md:flex w-10 h-10 rounded bg-blue-600 items-center justify-center shadow-lg shadow-blue-900/50 shrink-0">
-                            <IconArchive />
+                        {/* 데스크탑 전용 상단 타이틀 & 색상 보정 툴바 */}
+                        <div className="hidden md:flex flex-col gap-4 p-2 pb-5 border-b border-slate-800">
+                            <div className="flex items-center gap-2 text-white mb-2">
+                                <IconArchive /> <span className="font-bold">문서 보정기</span>
+                            </div>
+                            <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-1.5"><IconSliders/> 색상 보정</h3>
+                            <ColorAdjustmentPanel />
                         </div>
+
+                        {/* 모바일 전용: 색상 보정 패널 열기 버튼 */}
+                        <button onClick={() => setShowMobileColorPanel(true)} className="md:hidden w-16 h-16 shrink-0 border-2 border-slate-700 bg-slate-800 rounded-lg flex flex-col items-center justify-center text-slate-300 hover:bg-slate-700 transition-colors">
+                            <IconSliders />
+                            <span className="text-[10px] mt-1 font-medium">보정옵션</span>
+                        </button>
                         
                         <label 
                             onDrop={onDrop}
                             onDragOver={onDragOver}
-                            className="w-16 h-16 shrink-0 border-2 border-slate-700 border-dashed rounded-lg cursor-pointer bg-slate-800/50 hover:bg-slate-800 transition-colors flex items-center justify-center"
+                            className="w-16 h-16 md:w-full md:h-16 shrink-0 border-2 border-slate-700 border-dashed rounded-lg cursor-pointer bg-slate-800/50 hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
                             title="이미지 업로드">
                             <IconUpload />
+                            <span className="hidden md:block text-sm text-slate-400">이미지 추가...</span>
                             <input type="file" className="hidden" multiple accept="image/*" onChange={(e) => handleFiles(e.target.files)} />
                         </label>
 
-                        <div className="flex-1 overflow-x-auto md:overflow-y-auto md:overflow-x-hidden w-full flex md:flex-col flex-row items-center gap-3 no-scrollbar custom-scrollbar md:px-0">
+                        {/* 썸네일 리스트 */}
+                        <div className="flex-1 overflow-x-auto md:overflow-y-auto w-full flex md:flex-col flex-row items-center md:items-stretch gap-3 no-scrollbar custom-scrollbar pr-1">
                             {images.map((img, idx) => (
                                 <div key={img.id} onClick={() => { setActiveIndex(idx); setMobileTab('edit'); }}
-                                     className={`relative group w-16 h-16 shrink-0 rounded-lg cursor-pointer transition-all overflow-hidden border-2 ${activeIndex === idx ? 'border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'border-transparent hover:border-slate-700'}`}>
+                                     className={`relative group w-16 h-16 md:w-full md:h-20 shrink-0 rounded-lg cursor-pointer transition-all overflow-hidden border-2 ${activeIndex === idx ? 'border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'border-transparent hover:border-slate-700'}`}>
                                     <div className="w-full h-full bg-slate-800 bg-cover bg-center" style={{ backgroundImage: `url(${img.url})` }} />
-                                    <button onClick={(e) => deleteImage(e, idx)} className="absolute top-0 right-0 p-1 bg-slate-900/80 text-slate-400 hover:text-red-400 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity rounded-bl-md">
+                                    <button onClick={(e) => deleteImage(e, idx)} className="absolute top-0 right-0 p-1.5 bg-slate-900/80 text-slate-400 hover:text-red-400 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity rounded-bl-md">
                                         <IconTrash />
                                     </button>
                                 </div>
@@ -484,7 +590,7 @@
                         </div>
                     </div>
 
-                    {/* 편집 영역 (Center): 모바일에서는 'edit' 탭일 때만 렌더링 */}
+                    {/* 중앙 편집 영역 */}
                     <div className={`
                         flex-1 relative flex-col border-slate-800 overflow-hidden order-1 md:order-2 md:border-r
                         ${mobileTab === 'edit' ? 'flex' : 'hidden md:flex'}
@@ -493,35 +599,30 @@
                         {activeImage ? (
                             <div className="flex-1 relative checkerboard flex items-center justify-center overflow-hidden touch-action-none p-2 md:p-4">
                                 
-                                {/* 반응형 줌 슬라이더 패널 */}
                                 <div className="absolute top-3 left-3 md:top-4 md:left-4 flex flex-col items-start gap-2 z-30 pointer-events-none">
                                     <div className="text-[10px] md:text-xs bg-slate-900/90 px-2 py-1 md:px-3 md:py-1.5 rounded text-slate-300 shadow border border-slate-700">
-                                        4개의 모서리를 드래그하여 문서 영역을 맞추세요.
+                                        4개의 모서리를 드래그하여 영역을 맞추세요.
                                     </div>
                                     <div className="flex items-center gap-2 bg-slate-900/90 px-2 py-1 md:px-3 md:py-1.5 rounded text-slate-300 shadow border border-slate-700 pointer-events-auto">
                                         <span className="text-[10px] md:text-xs font-medium whitespace-nowrap">줌 {Math.round(zoomLevel * 100)}%</span>
-                                        <input type="range" min="0.5" max="3" step="0.1" value={zoomLevel} onChange={(e) => setZoomLevel(parseFloat(e.target.value))} className="w-16 md:w-24" title="줌 레벨 조절" />
+                                        <input type="range" min="0.5" max="3" step="0.1" value={zoomLevel} onChange={(e) => setZoomLevel(parseFloat(e.target.value))} className="w-16 md:w-24" />
                                     </div>
                                 </div>
                                 
-                                {/* 이미지와 보정 레이어를 감싸는 컨테이너 */}
                                 <div ref={imageContainerRef} className="relative shadow-2xl select-none w-full h-full max-w-full max-h-full flex items-center justify-center transition-transform origin-center" 
                                      style={{ touchAction: 'none', transform: `scale(${zoomLevel})` }}>
-                                    {/* 실제 이미지 태그에 ref 추가 */}
                                     <img ref={imageRef} src={activeImage.url} alt="Workspace" className="max-w-full max-h-full object-contain pointer-events-none rounded block" />
                                     
                                     <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
-                                        {/* 변환된 좌표를 사용하여 폴리곤 그리기 */}
                                         <polygon points={getSvgPolygonPoints()} className="fill-blue-500/10 stroke-blue-500 stroke-[0.3]" />
                                     </svg>
                                     
                                     {activeImage.points.map((p, i) => {
-                                        // 변환된 좌표를 사용하여 포인터 위치 계산
                                         const tp = getTransformedPoint(p);
                                         return (
                                             <div key={i}
                                                  className={`absolute w-10 h-10 -ml-5 -mt-5 md:w-8 md:h-8 md:-ml-4 md:-mt-4 bg-white/90 backdrop-blur border-[3px] border-blue-500 rounded-full cursor-grab active:cursor-grabbing shadow-xl z-20 flex items-center justify-center hover:scale-110 transition-transform ${draggingPoint === i ? 'scale-125 bg-blue-100' : ''}`}
-                                                 style={{ left: `${tp.x}%`, top: `${tp.y}%` }} // 변환된 좌표 적용
+                                                 style={{ left: `${tp.x}%`, top: `${tp.y}%` }}
                                                  onPointerDown={(e) => handlePointerDown(e, i)}
                                                  onPointerMove={handlePointerMove}
                                                  onPointerUp={handlePointerUp}
@@ -532,18 +633,17 @@
                                     })}
                                 </div>
 
-                                {/* 실시간 돋보기(Loupe) - 오작동 버그 수정 (zoomLevel 배제) */}
+                                {/* 돋보기 UI */}
                                 {draggingPoint !== null && (
                                     <div className="fixed rounded-full border-4 border-slate-700 bg-slate-900 overflow-hidden pointer-events-none z-50 shadow-[0_0_30px_rgba(0,0,0,0.8)]"
                                          style={{
                                              width: 140, height: 140,
                                              left: Math.max(10, Math.min(window.innerWidth - 150, mousePos.x - 70)), 
-                                             top: Math.max(10, mousePos.y - 170), // 마우스 포인터 위쪽에 렌더링
+                                             top: Math.max(10, mousePos.y - 170),
                                          }}>
                                          <div style={{
                                              width: '100%', height: '100%',
                                              backgroundImage: `url(${activeImage.url})`,
-                                             // 돋보기는 화면 줌 레벨과 상관없이 원본 이미지의 2배율 고정 사이즈로 계산합니다.
                                              backgroundSize: `${activeImage.imageObj.width * 2}px ${activeImage.imageObj.height * 2}px`,
                                              backgroundPosition: `${70 - activeImage.points[draggingPoint].x * activeImage.imageObj.width * 2}px ${70 - activeImage.points[draggingPoint].y * activeImage.imageObj.height * 2}px`,
                                              backgroundRepeat: 'no-repeat'
@@ -558,19 +658,30 @@
                                 <div className="w-16 h-16 mb-4 rounded-full bg-slate-800 flex items-center justify-center">
                                     <IconUpload />
                                 </div>
-                                <p className="text-sm md:text-lg">하단(또는 좌측)에서 이미지를 추가해주세요.</p>
+                                <p className="text-sm md:text-lg">좌측 또는 하단에서 이미지를 추가해주세요.</p>
                             </div>
                         )}
                     </div>
 
-                    {/* 오른쪽: 미리보기 및 옵션 (모바일에서는 'preview' 탭일 때만) */}
+                    {/* 오른쪽: 미리보기 및 옵션 */}
                     <div className={`
-                        flex-1 md:max-w-[400px] bg-slate-900 flex-col z-20 shadow-2xl order-2 md:order-3
+                        flex-1 md:max-w-[450px] bg-slate-900 flex-col z-20 shadow-2xl order-2 md:order-3
                         ${mobileTab === 'preview' ? 'flex' : 'hidden md:flex'}
                     `}>
                         {/* 상단 컨트롤 바 */}
-                        <div className="p-3 border-b border-slate-800 flex flex-col gap-3 shrink-0 bg-slate-900 z-10">
-                            <h2 className="hidden md:block font-semibold text-slate-200">실시간 미리보기</h2>
+                        <div className="p-3 border-b border-slate-800 flex flex-col gap-3 shrink-0 bg-slate-900 z-10 relative">
+                            
+                            <div className="flex items-center justify-between">
+                                <h2 className="hidden md:block font-semibold text-slate-200">실시간 미리보기</h2>
+                                <h2 className="md:hidden font-semibold text-slate-200">보정 결과</h2>
+                                
+                                {/* 미리보기 줌(Zoom) 기능 */}
+                                <div className="flex items-center gap-2 bg-slate-800 px-2 py-1.5 rounded-lg border border-slate-700">
+                                    <IconZoomIn />
+                                    <input type="range" min="1" max="3" step="0.1" value={previewZoomLevel} onChange={(e) => setPreviewZoomLevel(parseFloat(e.target.value))} className="w-16 md:w-20" title="결과물 줌" />
+                                    <span className="text-[10px] text-slate-400 w-8 text-right font-mono">{Math.round(previewZoomLevel * 100)}%</span>
+                                </div>
+                            </div>
                             
                             <div className="flex items-center justify-between gap-2">
                                 {/* 격자 토글 */}
@@ -589,33 +700,54 @@
                                 <div className="flex gap-1.5">
                                     <button onClick={downloadSingle} disabled={!activeImage || isExporting} 
                                             className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium transition-colors text-xs md:text-sm">
-                                        <IconDownload /> <span className="hidden sm:inline">단일</span>
+                                        <IconDownload /> <span className="hidden sm:inline">단일저장</span>
                                     </button>
                                     <button onClick={downloadZip} disabled={images.length === 0 || isExporting}
                                             className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium shadow-lg shadow-blue-900/50 transition-all active:scale-[0.98] text-xs md:text-sm">
-                                        <IconArchive /> <span>전체 ({images.length})</span>
+                                        <IconArchive /> <span>전체저장</span>
                                     </button>
                                 </div>
                             </div>
                         </div>
                         
-                        {/* 미리보기 캔버스 영역 */}
+                        {/* 미리보기 캔버스 영역 (줌 기능 적용) */}
                         <div className="flex-1 p-3 flex flex-col overflow-hidden bg-slate-950">
-                            <div className="w-full h-full rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center checkerboard">
-                                {activeImage ? (
-                                    <canvas ref={previewCanvasRef} className="max-w-full max-h-full object-contain shadow-lg" />
-                                ) : (
-                                    <span className="text-sm text-slate-600">선택된 이미지 없음</span>
-                                )}
+                            <div className="w-full h-full rounded-lg border border-slate-800 overflow-auto checkerboard custom-scrollbar">
+                                <div className="min-w-full min-h-full flex items-center justify-center p-2">
+                                    {activeImage ? (
+                                        <canvas ref={previewCanvasRef} 
+                                            style={{ 
+                                                width: `${previewZoomLevel * 100}%`, 
+                                                height: `${previewZoomLevel * 100}%`,
+                                                objectFit: 'contain'
+                                            }} 
+                                            className="shadow-lg max-w-none max-h-none transition-all duration-200 ease-out" />
+                                    ) : (
+                                        <span className="text-sm text-slate-600">선택된 이미지 없음</span>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
+
+                    {/* 모바일용 색상 보정 바텀 시트 */}
+                    {showMobileColorPanel && (
+                        <div className="md:hidden fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowMobileColorPanel(false)}>
+                            <div className="w-full bg-slate-900 rounded-t-2xl p-5 border-t border-slate-700 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] pb-10 transform transition-transform" onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="font-semibold text-white flex items-center gap-2"><IconSliders/> 색상 상세 보정</h3>
+                                    <button onClick={() => setShowMobileColorPanel(false)} className="p-1.5 bg-slate-800 rounded-lg text-slate-400 hover:text-white">닫기</button>
+                                </div>
+                                <ColorAdjustmentPanel />
+                            </div>
+                        </div>
+                    )}
 
                     {/* 로딩 오버레이 */}
                     {isExporting && (
                         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex flex-col items-center justify-center">
                             <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                            <p className="mt-4 text-white font-medium text-sm">고해상도 이미지 생성 중...</p>
+                            <p className="mt-4 text-white font-medium text-sm">고해상도 이미지 처리 중...</p>
                         </div>
                     )}
                 </div>
